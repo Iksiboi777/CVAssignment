@@ -1,0 +1,10 @@
+# Generated render artifacts
+*.png
+
+# Probe staging artifacts (not part of the deliverable source)
+probes/
+deliverable/
+
+# Python cache
+__pycache__/
+*.pyc
