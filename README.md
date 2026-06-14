@@ -12,6 +12,7 @@ uv venv delta_venv --python 3.12
 uv pip install --python delta_venv\Scripts\python.exe numpy open3d opencv-python matplotlib
 delta_venv\Scripts\python.exe solution\phase_a1_a2.py
 delta_venv\Scripts\python.exe solution\phase_a3.py
+delta_venv\Scripts\python.exe solution\ply_writer.py
 ```
 
 (open3d ships no Python 3.13 wheels, hence the pinned 3.12 env.)
@@ -35,6 +36,19 @@ Before transforming anything, establish with evidence what was provided.
   is thinnest along Y (flatness 4.66) and thick along Z (0.55) — the floor-slab test.
   Conclusion: source world is **Y-down**; the viewer is Y-up; that single axis flip
   is the target of the transformation.
+
+## Phase B — PLY I/O primitive
+
+Before transforming any data, establish a writer that produces files the viewer's
+unknown parser will accept without complaint.
+
+- **B — header-faithful ASCII PLY writer.** The viewer's PLY parser is a black box
+  (closed Unity build). The safest strategy is to clone the original header byte-for-byte
+  — same property names, same types, same line endings, only the `element vertex` count
+  rewritten — and emit data rows in the exact same `x y z r g b` format. A round-trip
+  self-test (write → re-read with open3d) confirms coordinates are preserved to 1e-5 and
+  colors are bit-exact. All later phases write converted clouds through this function,
+  so any format problem surfaces here before touching the viewer.
 
 ## Searching for the transformation
 

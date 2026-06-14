@@ -5,6 +5,10 @@
 probes/
 deliverable/
 
+# Writer self-test scratch output + any generated point clouds
+_scratch/
+*.ply
+
 # Python cache
 __pycache__/
 *.pyc
