@@ -13,9 +13,14 @@ uv pip install --python delta_venv\Scripts\python.exe numpy open3d opencv-python
 delta_venv\Scripts\python.exe solution\phase_a1_a2.py
 delta_venv\Scripts\python.exe solution\phase_a3.py
 delta_venv\Scripts\python.exe solution\ply_writer.py
+delta_venv\Scripts\python.exe solution\phase_c.py preview
+delta_venv\Scripts\python.exe solution\phase_c.py downsample
 ```
 
 (open3d ships no Python 3.13 wheels, hence the pinned 3.12 env.)
+
+`phase_c.py` takes a mode: `preview` renders a local PNG, `downsample` stages the
+CP1 check into the viewer (see below), and no argument runs both.
 
 ## Phase A — what the input files are
 
@@ -49,6 +54,31 @@ unknown parser will accept without complaint.
   self-test (write → re-read with open3d) confirms coordinates are preserved to 1e-5 and
   colors are bit-exact. All later phases write converted clouds through this function,
   so any format problem surfaces here before touching the viewer.
+
+## Phase C — fast iteration and the CP1 checkpoint
+
+The full clouds are ~3M points each, so the viewer loads them in minutes. Every
+geometry experiment would be unbearable at that speed, and a wrong guess is hard to
+diagnose when each look costs minutes. Phase C fixes both with two tools and the
+first rung of a checkpoint ladder.
+
+- **`preview` — the local microscope.** Composes `world = M · p` in numpy and draws
+  three fixed viewpoints to a PNG in seconds, no Unity. It renders *our current
+  belief* about placement, so it is for fast iteration only, never the final verdict —
+  only the real viewer certifies "done". An optional correction `D` can be passed to
+  preview a candidate transform before committing it.
+- **`downsample` — the CP1 I/O checkpoint.** Writes every 100th point (~30k/cloud)
+  through the Phase B writer into the viewer's `StreamingAssets\Points\`, leaving
+  `traj.txt` untouched. It transforms *nothing*: CP1 is purely an I/O test. Relaunch
+  the viewer and you should see the **same scene as the untouched originals (CP0)**,
+  just sparser and orbiting fast. If CP1 looks corrupted or won't load, the bug is in
+  the writer — caught here, before any coordinate math is in play.
+
+This is the discipline for the whole solution: each step is gated by a viewer
+checkpoint, so a regression is localised to the one thing that changed since the last
+green check. CP0 = untouched originals; CP1 = downsampled, same scene; later
+checkpoints add the geometry. Reading `data_original\` only and writing
+`StreamingAssets\` only, the pristine originals always remain the restore source.
 
 ## Searching for the transformation
 
