@@ -12,3 +12,6 @@ _scratch/
 # Python cache
 __pycache__/
 *.pyc
+
+# Portfolio evidence: kept deliberately, overriding the *.png rule above
+!images/*.png

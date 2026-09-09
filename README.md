@@ -90,14 +90,20 @@ Before transforming anything, establish with evidence what was provided.
 - **A2 — the poses are camera-to-world.[^6]** Composing `world = M · p` interlocks the three
   clouds into one room (coherence ratio 1.64); the inverse `M⁻¹ · p` scatters them
   (2.45). So each cloud's pose places its camera-local points into the shared world.
-- **A3 — the source world's vertical axis is +Y (up).** Two independent methods agree:
-  (1) the camera's optical axis is local Z[^4] (every point has positive local Z — a camera
-  can't see behind itself), and step × view gives world-Y as the remaining perpendicular
-  axis, pointing **up** (step × view ≈ [-0.13, +0.978, +0.166]); (2) the bottom 5% of
-  world-placed points (the floor) sits at the most-negative Y (≈ -4.23) and is thinnest
-  along Y (flatness 4.66) and thick along Z (0.55) — the floor-slab test. Conclusion: the
-  source world is **Y-up**. The viewer's measured point map negates Y (Phase D, `V_pt`),
-  so the export must pre-compensate for that negation to keep the room from inverting.
+- **A3 — an attempt at the vertical that later turned out to be wrong.** `phase_a3.py`
+  argues the vertical two ways: (1) the camera's optical axis is local Z[^4] (every point
+  has positive local Z — a camera can't see behind itself), so step × view gives the
+  remaining perpendicular axis, ≈ `[-0.13, +0.978, +0.166]`; (2) a floor-slab test on the
+  world-placed points, which picks the same axis. Both were run **before Phase E found the
+  re-aim convention `C`**, so both describe the placement `M · p` — not the coherent world
+  `M · C · p` that the solution actually exports. Re-measured in that world, this vector is
+  **horizontal** (it is essentially the wall normal), not the vertical.
+
+  The mistake is worth keeping visible because it survived two rounds of review: "two
+  independent methods agree" is much weaker than it sounds when both consume the same
+  unvalidated assumption about which local axis is the optical axis. The vertical is now
+  *measured from the scene geometry* in Phase F, and checked against ground truth that owes
+  nothing to the poses — see **What broke, and how it was caught** below.
 
 ## Phase B — PLY I/O primitive
 
@@ -158,7 +164,9 @@ appearance is known in advance and reading the result off the screen.
   measures `F` — how a traj line becomes a Unity transform (it uses the poses verbatim,
   no inversion or hidden rotation)[^12]. These two measurements are what the final export
   must pre-compensate for; a local reference PNG of the glyph is written to `probes\` so
-  you know what "no transform" should look like before reading the viewer.
+  you know what "no transform" should look like before reading the viewer:
+
+  ![axis-triad calibration glyph](images/glyph_reference.png)
 
 ## Phase E — finding the re-aim convention
 
@@ -175,30 +183,121 @@ correct, so the approach is to measure it directly from the data.
   measurable quantity, not a guess. The intrinsics (fx, fy, cx, cy) are also recovered
   from the data: the PLYs are one-point-per-pixel (2533 × 1170 = 2,963,610 vertices), so
   pixel index → (u, v) and a linear regression[^7] of u ~ x/z gives fx, cx at R² = 1.0000
-  — no assumed values. Running the reprojection across all 48 signed-axis permutations,
-  **C = −X,−Z,−Y** wins with 81.7% of reprojected points landing within ε of a
-  geometrically coincident world point in camera j, confirmed by colour match. The
-  runner-up is separated by >20 pp.
+  — no assumed values (fx = −1672.5, cx = 1267.0; fy = −1661.2, cy = 588.5). The negative
+  focal signs are themselves a measurement: they say the points' local +x runs left and
+  local +y runs **up** in the image, which Phase F later uses to fix the sign of the
+  vertical.
+
+  Running the reprojection across all 48 signed-axis permutations (ε = 0.14) gives a
+  result that no single column decides:
+
+  | C | reprojected | median 3D dist | coincide % | colour % |
+  |---|---|---|---|---|
+  | `+X,+Z,+Y` | 325278 | **0.146** | **49.4%** | 44.8% |
+  | **`−X,−Z,−Y`** (shipped) | 168076 | 0.174 | 45.7% | 81.7% |
+  | `+Z,−X,+Y` | 183608 | 0.299 | 43.3% | **86.2%** |
+
+  `+X,+Z,+Y` leads on raw coincidence and on median distance, but its colour agreement
+  collapses to 44.8% — it is stacking surfaces that are geometrically near each other but
+  are not the same surface, the classic photo-consistency false positive. Conversely
+  `+Z,−X,+Y` wins on colour alone. **`−X,−Z,−Y` is the only candidate that is strong on
+  all three**, and it is the one the viewer confirms. Reporting "81.7%" as a coincidence
+  score, as an earlier draft of this file did, overstates how cleanly the metric decides:
+  the search narrows 48 candidates to 3, and the viewer picks among those.
 
 ## Phase F — export
 
 With C known (Phase E) and the viewer's point/pose maps measured (Phase D), the
 world-bake formula `w = M · C · p` places every cloud into the shared world. The poses
 are then replaced by identity matrices so the viewer sees one pre-composed scene with no
-per-cloud transform applied. A final orientation rotation D (derived from the pan axis of
-the camera sequence) sets the room's upright axis for the viewer.
+per-cloud transform applied. A final orientation rotation D stands the room upright.
 
-- **F — world-bake, oriented, full-resolution export.** `phase_f.py` applies C, computes
-  the scene's pan axis (the eigenvector of pairwise camera rotations[^8] — the axis the
-  camera rotated around between shots, which is the scene's "up"), and builds D as the
-  minimal proper rotation[^9] that maps that axis to Unity's +Y[^11], composed with a
-  `diag(1, -1, -1)` pre-compensation[^10] for the viewer's Y-negation (`V_pt`, measured in
-  Phase D). For this dataset the source world is already Y-up (Phase A3), so those two
-  factors very nearly cancel and D reduces to near-identity — the export preserves the
-  world-baked orientation. All three clouds are processed at full resolution (~2.9 M
-  points each), with only a gentle statistical outlier removal (std 2.0)[^3] to kill
-  isolated specks without amputating wall geometry. The output is three replacement PLYs
-  plus an identity traj.txt in `StreamingAssets\`. Relaunch the viewer to see the result.
+**What D has to satisfy.** The export writes `f = V_pt · (D · (V_pt · w − c₀) + c₀)`, and
+the viewer applies its own `V_pt` on load. Since `V_pt · V_pt = I`, the rotation the viewer
+actually shows is
+
+```
+displayed = D · V_pt · w + const
+```
+
+so D is exactly the matrix that must send the room's true vertical to Unity's +Y **under
+that composition** — nothing more. Two consequences worth stating plainly: `det(D · V_pt)
+= −1`, i.e. the pipeline contains exactly one reflection, which is correct and necessary
+because the source PLY frame is right-handed (x left, y up, z forward — read off the
+negative focal signs in Phase E) while Unity is left-handed[^11]; and D is **not**
+near-identity for this dataset (`max|D − I| ≈ 1.98`), because the measured vertical is
+nowhere near the world's +Y axis.
+
+- **F — world-bake, oriented, full-resolution export.** `phase_f.py` applies C, then
+  *measures* the vertical from the scene rather than inferring it from camera motion.
+  `wall_normal()` finds the dominant plane's normal by iterating its surface-normal
+  cluster to a fixed point, seeded from the cameras' own optical axis (under C that is
+  `−R[:,1]`) because the cameras face the wall; the iteration is only locally convergent,
+  so that seed is load-bearing — random seeds settle on side walls with a tenth of the
+  support. `scene_up()` then takes the common perpendicular of that normal and the camera
+  path, which is the vertical because walls are vertical and the rig moved horizontally,
+  and fixes the sign from the cameras' image-up axis (`−R[:,2]`). D is the minimal proper
+  rotation[^9] mapping `V_pt · up` to +Y[^11].
+
+  The measurement is self-checking: the dominant plane comes out 89.4° off the camera path
+  and 90.00° off the derived up — a genuinely vertical wall parallel to the rig's motion —
+  and it places the cameras 1.18 above the floor in a room 2.15 tall, which is a plausible
+  handheld capture. The measured up is `(−0.012, −0.398, 0.917)` and `D · V_pt · up`
+  comes out as +Y to machine precision.
+
+  All three clouds are processed at full resolution (~2.9 M points each), with only a
+  gentle statistical outlier removal (std 2.0)[^3] to kill isolated specks without
+  amputating wall geometry. The output is three replacement PLYs plus an identity traj.txt
+  in `StreamingAssets\`. Relaunch the viewer to see the result.
+
+## What broke, and how it was caught
+
+The first version of this solution exported a room that was **coherent but lying on its
+side**. Everything upstream was right — the clouds interlocked, the colours matched, the
+walls were solid — and exactly one thing was wrong: which direction was up.
+
+| | |
+|---|---|
+| ![before](images/before_tipped.png) | ![after](images/after_upright.png) |
+| **Before.** The furniture wall renders on its side. | **After.** Doors, wall panels and chair stand vertical. |
+
+The orientation had been derived twice, by two different arguments, and **both were
+wrong**:
+
+- `phase_f.py` used the **pan axis** — the eigenvector of the pairwise camera rotations —
+  on the assumption that a camera panning across a room rotates about the vertical.
+  Measured against ground truth, that axis points **downward** and is 22° off-axis. The
+  rig was handheld, not on a tripod: it rolled as much as it panned.
+- Phase A3 used **step × view**, and the README claimed it was corroborated by a
+  floor-slab test. Both were computed before Phase E found `C`, so both describe `M · p`
+  rather than the coherent world `M · C · p`. In the world the solution actually exports,
+  that vector is **horizontal** — it is roughly the wall normal.
+
+A third error sat on top: a `diag(1, −1, −1)` prefactor multiplied into D as a
+"pre-compensation" for the viewer's Y-negation. But the viewer's `V_pt` already appears
+in the composition `D · V_pt`, so the prefactor was a second, redundant flip. Removing it
+alone would not have fixed anything — with the pan axis still feeding D, the room merely
+moves from one wrong orientation to another.
+
+**What settled it** was a test that owes nothing to the poses. The PLYs are one point per
+pixel in row-major order (Phase E), so pixel row `v` increases *downward* in the original
+photograph. A correct up-vector must therefore anti-correlate with world height. Running
+that correlation over all three clouds:
+
+| candidate up | image1 | image2 | image3 | verdict |
+|---|---|---|---|---|
+| measured (wall × camera path) | −0.804 | −0.975 | −0.964 | correct |
+| Phase A3 `step × view` | −0.082 | +0.635 | +0.381 | horizontal — not a vertical |
+| `phase_f` pan axis | +0.695 | +0.944 | +0.968 | **inverted** |
+
+The lesson is the one this whole solution is built on, applied one level deeper than
+before: *the viewer is the only trustworthy oracle, and a derivation that has never been
+checked against measured ground truth is a hypothesis, not a result.* Two independent
+derivations agreeing is not corroboration when both inherit the same unvalidated
+assumption — here, which local axis is the optical axis. The fix replaces both with a
+direct measurement of the scene's own geometry, cross-checked three ways (wall
+perpendicularity, camera height consistency, and the pixel-row correlation above) and
+then confirmed in the viewer.
 
 ## References
 
